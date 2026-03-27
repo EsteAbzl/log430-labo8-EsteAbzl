@@ -4,6 +4,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 Auteurs : Gabriel C. Ullmann, Fabio Petrillo, 2025
 """
 from typing import Dict, Any
+import requests
 import config
 from event_management.base_handler import EventHandler
 from orders.commands.order_event_producer import OrderEventProducer
@@ -35,12 +36,36 @@ class StockDecreasedHandler(EventHandler):
         être notifiée de la mise à jour du stock afin de générer une transaction de paiement.
         '''
         try:
-            # Si la transaction de paiement a été crée, déclenchez PaymentCreated.
-            event_data['event'] = "PaymentCreated"
-            self.logger.debug(f"payment_link={event_data['payment_link']}")
-            OrderEventProducer().get_instance().send(config.KAFKA_TOPIC, value=event_data)
+
+            # création du lien de paiement
+            response = requests.post(f'http://api-gateway:8080/payments-api/payments',
+                json={
+                    "user_id": event_data['user_id'],
+                    "order_id": event_data['order_id'],
+                    "total_amount": event_data['total_amount']
+                },
+                headers={'Content-Type': 'application/json'}
+            )
+            if response.ok:
+                self.logger.debug("Transition d'état: CreatePayment -> PAYMENT_CREATED")
+                # Si la transaction de paiement a été crée, déclenchez PaymentCreated.
+                payload = response.json() or {}
+                payment_id = payload.get('payment_id')
+
+                event_data['payment_link'] = f"http://api-gateway:8080/payments-api/payments/process/{payment_id}"
+                event_data['event'] = "PaymentCreated"
+                self.logger.debug(f"payment_link={event_data['payment_link']}")
+            else:
+                # Si la mise à jour du stock a échoué, déclenchez PaymentCreationFailed.
+                self.logger.debug("payment demandé mais pas ok")
+                event_data['event'] = "PaymentCreationFailed"
+
         except Exception as e:
-            # TODO: Si la transaction de paiement n'était pas crée, déclenchez l'événement adéquat selon le diagramme.
+            # Si la mise à jour du stock a échoué, déclenchez PaymentCreationFailed.
+            self.logger.debug(f"payment erreur : {e}")
+            event_data['event'] = "PaymentCreationFailed"
             event_data['error'] = str(e)
+        finally:
+            self.order_producer.get_instance().send(config.KAFKA_TOPIC, value=event_data)
 
 

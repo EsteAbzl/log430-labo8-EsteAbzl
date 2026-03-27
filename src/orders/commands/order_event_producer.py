@@ -20,3 +20,5 @@ class OrderEventProducer(metaclass=Singleton):
 
   def get_instance(self):
     return self.producer
+
+# C'est pas du tout un singleton là, pour ça il faut que le constructeur soit privé et que self.producer soit une variable de classe. Ce qui n'est pas le cas vraissemblablement à part si je loupe quelque chose avec l'import de Singleton
